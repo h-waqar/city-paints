@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Plugin Name: CityPaints ERP Sync
+ * Plugin Name: ! CityPaints ERP Sync
  * Description: Sync products and orders between WooCommerce and CityPaints ERP.
  * Version: 0.1.0
  * Author: Cubixsol

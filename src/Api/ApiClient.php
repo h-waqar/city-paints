@@ -20,7 +20,6 @@ class ApiClient
         $this->password = $password;
         $this->apiKey   = $apiKey;
         $this->auth     = new AuthManager();
-        $this->logger   = $core->getLogger();
     }
 
     public function get(string $endpoint, array $args = []): array|WP_Error

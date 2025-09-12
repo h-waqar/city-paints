@@ -38,10 +38,35 @@ spl_autoload_register(function ($class) {
     }
 });
 
+///**
+// * Bootstrap plugin
+// */
+//function citypaints_erp_sync_init()
+//{
+//    // Example: check WooCommerce dependency
+//    if (!class_exists('WooCommerce')) {
+//        add_action('admin_notices', function () {
+//            echo '<div class="notice notice-error"><p>'
+//                . esc_html__('CityPaints ERP Sync requires WooCommerce.', 'citypaints-erp-sync')
+//                . '</p></div>';
+//        });
+//        return;
+//    }
+//
+//    require_once __DIR__ . '/src/Helpers/Logger.php';
+//
+//    global $CLOGGER;
+//    $CLOGGER = new CityPaintsERP\Helpers\Logger('citypaints');
+//
+//    // Kick off plugin core
+//    $core = new CityPaintsERP\Core();
+//    $core->init();
+//}
+
 /**
  * Bootstrap plugin
  */
-function citypaints_erp_sync_init()
+function citypaints_erp_sync_init(): void
 {
     // Example: check WooCommerce dependency
     if (!class_exists('WooCommerce')) {
@@ -53,9 +78,25 @@ function citypaints_erp_sync_init()
         return;
     }
 
+    require_once __DIR__ . '/src/Helpers/Logger.php';
+
+    // Instantiate logger once, store in both global + $GLOBALS
+    $logger = new CityPaintsERP\Helpers\Logger('citypaints');
+
+    global $CLOGGER;
+    $CLOGGER = $logger;
+
+    echo "<pre>";
+    print_r($logger);
+    echo "</pre>";
+    wp_die();
+
+    $GLOBALS['CLOGGER'] = $logger;
+
     // Kick off plugin core
     $core = new CityPaintsERP\Core();
     $core->init();
 }
+
 
 add_action('plugins_loaded', 'citypaints_erp_sync_init');

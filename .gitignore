@@ -25,5 +25,5 @@ build/
 .env.local
 
 # WordPress specific
+logs
 *.log
-src/logs

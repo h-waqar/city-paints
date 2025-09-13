@@ -30,8 +30,12 @@ class Logger
     public function __construct(string $prefix = 'citypaints', ?string $pluginRoot = null, bool $enabled = true, int $retentionDays = 30)
     {
         $this->prefix = preg_replace('/[^A-Za-z0-9_\-]/', '_', $prefix);
-        $this->enabled = (bool) $enabled;
         $this->retentionDays = max(0, (int) $retentionDays);
+
+        if (defined('CITYPAINTS_ENABLE_LOGS') && !CITYPAINTS_ENABLE_LOGS) {
+            $this->enabled = false;
+            return;
+        }
 
         // resolve plugin root if not provided
         if ($pluginRoot) {

@@ -68,5 +68,38 @@ function citypaints_erp_sync_init() {
 	$core->init();
 }
 
-add_action( 'plugins_loaded', 'citypaints_erp_sync_init' );
 
+add_action( 'plugins_loaded', 'citypaints_erp_sync_init' );
+//add_action( 'admin_init', 'citypaints_erp_sync_init', 20 );
+
+
+function wpRemoteApiCall() {
+	$url = 'https://213.123.198.147:446/api/products';
+
+	$token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjdlYTQzZjlhLTVhNDAtNDFlMi1iZWRiLWM1N2RjYTQzZWIyNSJ9.eyJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy93cy8yMDA1LzA1L2lkZW50aXR5L2NsYWltcy9uYW1lIjoiRDRXZWJEZXNpZ24iLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3JvbGUiOlsiU3RhdGljIiwiV2ViT3JkZXJzIl0sImV4cCI6MTc1Nzc2NTYwMSwiaXNzIjoid3d3LnByb2Z0ZWNrLmllIiwiYXVkIjoiN2VhNDNmOWEtNWE0MC00MWUyLWJlZGItYzU3ZGNhNDNlYjI1In0.e_GULOD09AG7Ly2XQr46MKpC_C0SgDDv8WZNujOIfbQ";
+
+	$response = wp_remote_request( $url, [
+		'method'    => 'get',
+		'headers'   => [
+			'Content-Type'  => 'application/json',
+			'Accept'        => 'application/json',
+			'x-api-key'     => '7ea43f9a-5a40-41e2-bedb-c57dca43eb25',
+			'Authorization' => "Bearer $token",
+		],
+		'body'      => ! empty( $body ) ? wp_json_encode( $body ) : null,
+		'timeout'   => 20,
+		'sslverify' => false, // 🔥 dev only
+	] );
+
+
+	$data = json_decode( wp_remote_retrieve_body( $response ), true );
+
+	echo "<pre>";
+//	print_r( $response );
+	print_r( $data );
+	echo "<pre>";
+
+	wp_die();
+}
+
+//add_action( 'init', 'wpRemoteApiCall', 20 );

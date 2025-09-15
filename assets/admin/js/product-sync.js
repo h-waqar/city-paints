@@ -1,3 +1,4 @@
+// assets/admin/js/product-sync.js
 class CityPaintsProductSync {
     constructor(buttonSelector, options) {
         this.$button = jQuery(buttonSelector);

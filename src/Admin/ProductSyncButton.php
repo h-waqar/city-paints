@@ -2,13 +2,25 @@
 
 namespace CityPaintsERP\Admin;
 
+
+use CityPaintsERP\Api\ProductApi;
+use CityPaintsERP\Sync\ProductMapper;
+use Throwable;
+
 class ProductSyncButton {
+
+	private $fetch;
+
 	public function __construct() {
 		// Add button in Products list page toolbar
 		add_action( 'manage_posts_extra_tablenav', [ $this, 'renderButton' ], 20, 1 );
 
 		// Register AJAX action
 		add_action( 'wp_ajax_citypaints_sync_products', [ $this, 'handleSync' ] );
+
+//		$this->fetch = new ProductApi();
+		$api         = new ProductApi();
+		$this->fetch = new ProductMapper( $api );
 	}
 
 	public function renderButton( string $which ): void {
@@ -25,13 +37,31 @@ class ProductSyncButton {
 	}
 
 	public function handleSync(): void {
-		check_ajax_referer( 'citypaints_sync', 'nonce' );
+		try {
+			check_ajax_referer( 'citypaints_sync', 'nonce' );
 
-		if ( ! current_user_can( 'manage_woocommerce' ) ) {
-			wp_send_json_error( [ 'message' => 'Permission denied' ] );
+			if ( ! current_user_can( 'manage_woocommerce' ) ) {
+				wp_send_json_error( [ 'message' => 'Permission denied' ], 403 );
+			}
+
+//			$res = $this->fetch->listProducts();
+			$res = $this->fetch->fetchMegaProducts();
+
+			if ( is_wp_error( $res ) ) {
+				wp_send_json_error( [ 'message' => $res->get_error_message(), 'data' => $res->get_error_data() ], 500 );
+			}
+
+			wp_send_json_success( [
+				'message' => 'Products synced successfully (placeholder)',
+				'data'    => $res
+			] );
+
+		} catch ( Throwable $e ) {
+			wp_send_json_error( [
+				'message' => $e->getMessage(),
+				'trace'   => $e->getTraceAsString(),
+			], 500 );
 		}
-
-		// Example placeholder until SyncManager is implemented
-		wp_send_json_success( [ 'message' => 'Products synced successfully (placeholder)' ] );
 	}
+
 }

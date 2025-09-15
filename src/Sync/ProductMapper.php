@@ -13,58 +13,100 @@ class ProductMapper {
 	}
 
 	/**
-	 * Return array of merged product arrays (mega objects).
-	 * [
-	 *   [
-	 *     'Id'=>1,'SKU'=>'5190841','Name'=>'...','Units'=>[ ... ],
-	 *     'Prices'=>[ ... ], 'Qtys'=>[ ... ], 'Images'=>[ ... ]
-	 *   ],
-	 *   ...
-	 * ]
+	 * Fetch products and fetch prices, quantities, images for each individually
 	 */
 	public function fetchMegaProducts(): array|WP_Error {
+		global $CLOGGER;
+
 		$products = $this->productApi->listProducts();
-		$prices   = $this->productApi->listPrices();
-		$qtys     = $this->productApi->listQuantities();
-		$images   = $this->productApi->listImages();
+		if ( is_wp_error( $products ) ) {
+			if ( isset( $CLOGGER ) ) {
+				$CLOGGER->error( 'Failed to fetch products', [ 'error' => $products->get_error_messages() ] );
+			}
 
-		// handle WP_Error
-		if ( is_wp_error( $products ) || is_wp_error( $prices ) || is_wp_error( $qtys ) || is_wp_error( $images ) ) {
-			return is_wp_error( $products ) ? $products : new WP_Error( 'api_error', 'Failed to fetch some endpoints' );
+			return $products;
 		}
 
-		// build lookup maps keyed by product Id
-		$priceMap = [];
-		foreach ( $prices as $p ) {
-			$priceMap[ $p['Id'] ] = $p['Product_Prices'] ?? [];
+		if ( isset( $CLOGGER ) ) {
+			$CLOGGER->info( 'Fetched products count', [ 'count' => count( $products ) ] );
 		}
 
-		$qtyMap = [];
-		foreach ( $qtys as $q ) {
-			$qtyMap[ $q['Id'] ] = $q['Product_Qtys'] ?? [];
-		}
+		$megaProducts = [];
 
-		$imgMap = [];
-		foreach ( $images as $i ) {
-			$imgMap[ $i['Id'] ] = $i['Product_Images'] ?? [];
-		}
-
-		// merge
-		$out = [];
 		foreach ( $products as $product ) {
-			$id                        = $product['Id'];
-			$product['Product_Prices'] = $priceMap[ $id ] ?? [];
-			$product['Product_Qtys']   = $qtyMap[ $id ] ?? [];
-			$product['Product_Images'] = $imgMap[ $id ] ?? [];
-			$out[]                     = $this->normalize( $product );
+			$id = $product['Id'] ?? null;
+			if ( ! $id ) {
+				if ( isset( $CLOGGER ) ) {
+					$CLOGGER->warning( 'Product missing Id, skipping', [ 'product' => $product ] );
+				}
+				continue;
+			}
+
+			if ( isset( $CLOGGER ) ) {
+				$CLOGGER->info( "Processing product {$id}", [ 'SKU' => $product['SKU'] ?? null ] );
+			}
+
+			$errors = [];
+
+			// per-product calls
+			$pricesResp = $this->productApi->listPrices( (int) $id );
+			if ( is_wp_error( $pricesResp ) ) {
+				$errors[]      = [
+					'prices' => $pricesResp->get_error_messages(),
+					'code'   => $pricesResp->get_error_code()
+				];
+				$productPrices = [];
+				if ( isset( $CLOGGER ) ) {
+					$CLOGGER->error( "Prices fetch failed for {$id}", $pricesResp->get_error_messages() );
+				}
+			} else {
+				// unwrap structure: may be wrapper { Id, SKU, Product_Prices }
+				$productPrices = $pricesResp['Product_Prices'] ?? ( is_array( $pricesResp ) ? $pricesResp : [] );
+			}
+
+			$qtysResp = $this->productApi->listQuantities( (int) $id );
+			if ( is_wp_error( $qtysResp ) ) {
+				$errors[]    = [ 'qtys' => $qtysResp->get_error_messages(), 'code' => $qtysResp->get_error_code() ];
+				$productQtys = [];
+				if ( isset( $CLOGGER ) ) {
+					$CLOGGER->error( "Qtys fetch failed for {$id}", $qtysResp->get_error_messages() );
+				}
+			} else {
+				$productQtys = $qtysResp['Product_Qtys'] ?? ( is_array( $qtysResp ) ? $qtysResp : [] );
+			}
+
+			$imagesResp = $this->productApi->listImages( (int) $id );
+			if ( is_wp_error( $imagesResp ) ) {
+				$errors[]      = [
+					'images' => $imagesResp->get_error_messages(),
+					'code'   => $imagesResp->get_error_code()
+				];
+				$productImages = [];
+				if ( isset( $CLOGGER ) ) {
+					$CLOGGER->error( "Images fetch failed for {$id}", $imagesResp->get_error_messages() );
+				}
+			} else {
+				$productImages = $imagesResp['Product_Images'] ?? ( is_array( $imagesResp ) ? $imagesResp : [] );
+			}
+
+			// attach the unwrapped arrays into product so normalize() can use them
+			$product['Product_Prices'] = $productPrices;
+			$product['Product_Qtys']   = $productQtys;
+			$product['Product_Images'] = $productImages;
+
+			// keep errors on the product (or just log — depending on what you prefer)
+			if ( ! empty( $errors ) ) {
+				$product['_sync_errors'] = $errors;
+			}
+
+			$megaProducts[] = $this->normalize( $product );
 		}
 
-		return $out;
+		return $megaProducts;
 	}
 
+
 	private function normalize( array $p ): array {
-		// flatten into the shape SyncManager expects
-		// map units into: [unit_id => ['id'=>..., 'short_name'=>..., 'price'=>..., 'stock'=>..., 'barcodes'=>[]]]
 		$units = [];
 		foreach ( $p['Product_Units'] ?? [] as $u ) {
 			$uid           = $u['Id'];
@@ -85,12 +127,13 @@ class ProductMapper {
 			'Name'        => $p['Name'],
 			'Description' => $p['Full_Description'] ?? '',
 			'Units'       => $units,
-			'Raw'         => $p, // keep original for debugging
 		];
 	}
 
+
 	private function findPriceForUnit( array $unitPrices, int $unitId ) {
 		// unitPrices structure: [ ['Unit_Id'=>1,'Prices'=>[...]] , ...]
+
 		foreach ( $unitPrices as $up ) {
 			if ( (int) $up['Unit_Id'] === (int) $unitId ) {
 				// find price where IsCustomerPrice true

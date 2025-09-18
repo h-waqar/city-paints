@@ -1,0 +1,93 @@
+<?php
+
+namespace CityPaintsERP\Api;
+
+use Exception;
+use WP_Error;
+
+class ApiClient {
+	private string $baseUrl;
+	private string $apiKey;
+	private AuthManager $auth;
+
+	public function __construct() {
+		$options = get_option( 'citypaints_erp_settings', [] );
+
+		if ( empty( $options['username'] ?? '' ) || empty( $options['password'] ?? '' ) || empty( $options['base_url'] ?? '' ) || empty( $options['api_key'] ?? '' ) ) {
+			throw new Exception( 'API credentials not set in settings.' );
+		}
+
+		$this->baseUrl = rtrim( $options['base_url'], '/' ) . '/';
+		$this->apiKey  = $options['api_key'];
+		$this->auth    = new AuthManager( $this->baseUrl, $options['username'], $options['password'], $this->apiKey );
+	}
+
+	public function get( string $endpoint, array $params = [] ): array|WP_Error {
+		return $this->request( 'GET', $endpoint, $params );
+	}
+
+	private function request( string $method, string $endpoint, array $params = [], array $body = [] ): array|WP_Error {
+		global $CLOGGER;
+
+		$token = $this->auth->getValidToken();
+		if ( is_wp_error( $token ) ) {
+			return $token;
+		}
+
+		$url = $this->baseUrl . ltrim( $endpoint, '/' );
+		if ( ! empty( $params ) ) {
+			$url = add_query_arg( $params, $url );
+		}
+
+		$args = [
+			'method'    => $method,
+			'headers'   => [
+				'Content-Type'  => 'application/json',
+				'Accept'        => 'application/json',
+				'x-api-key'     => $this->apiKey,
+				'Authorization' => "Bearer {$token}",
+			],
+			'timeout'   => 20,
+			'sslverify' => false,
+		];
+
+		if ( in_array( $method, [ 'POST', 'PUT', 'PATCH' ], true ) && ! empty( $body ) ) {
+			$args['body'] = wp_json_encode( $body );
+		}
+
+		if ( isset( $CLOGGER ) ) {
+			$CLOGGER->log( "ApiClient Request + ARGS: {$method} {$url}", $args );
+		}
+
+		$response = wp_remote_request( $url, $args );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		$raw  = wp_remote_retrieve_body( $response );
+		$data = json_decode( $raw, true );
+
+		if ( $raw !== '' && $data === null && json_last_error() !== JSON_ERROR_NONE ) {
+			return new WP_Error( 'invalid_json', 'Invalid JSON from API', [
+				'http_code' => $code,
+				'raw_body'  => $raw,
+			] );
+		}
+
+		if ( $code >= 200 && $code < 300 ) {
+			return is_array( $data ) ? $data : [];
+		}
+
+		return new WP_Error( 'api_http_error', "API returned HTTP {$code}", [
+			'http_code' => $code,
+			'body'      => $data ?? $raw,
+			'raw'       => $raw,
+		] );
+	}
+
+	public function post( string $endpoint, array $body = [] ): array|WP_Error {
+		return $this->request( 'POST', $endpoint, [], $body );
+	}
+}

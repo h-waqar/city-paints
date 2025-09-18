@@ -99,8 +99,16 @@ class ProductMapper {
 				$product['_sync_errors'] = $errors;
 			}
 
-			$megaProducts[] = $this->normalize( $product );
+//			$megaProducts[] = $this->normalize( $product );
+
+			$normalized     = $this->normalize( $product );
+			$megaProducts[] = [
+				'raw_data'   => $product,
+				'normalized' => $normalized,
+			];
 		}
+
+		$CLOGGER->log( 'Products data with RAW', $megaProducts );
 
 		return $megaProducts;
 	}
@@ -160,7 +168,7 @@ class ProductMapper {
 		return null;
 	}
 
-	private function findBarcodesForUnit( array $barcodes, int $unitId ) {
+	private function findBarcodesForUnit( array $barcodes, int $unitId ): array {
 		$out = [];
 		foreach ( $barcodes as $b ) {
 			if ( (int) $b['Id'] === (int) $unitId ) {

@@ -1,0 +1,166 @@
+<?php
+
+namespace CityPaintsERP\Api;
+
+use WP_Error;
+
+class AuthManager {
+	private string $option_token = 'citypaints_erp_token';
+	private string $option_expiry = 'citypaints_erp_token_expiry';
+	private string $option_refresh = 'citypaints_erp_refresh_token';
+
+	private string $baseUrl;
+	private string $username;
+	private string $password;
+	private string $apiKey;
+
+	public function __construct( string $baseUrl, string $username, string $password, string $apiKey ) {
+		$this->baseUrl  = rtrim( $baseUrl, '/' ) . '/';
+		$this->username = $username;
+		$this->password = $password;
+		$this->apiKey   = $apiKey;
+	}
+
+	/**
+	 * Get a valid token (refreshes or logs in if expired)
+	 */
+	public function getValidToken(): string|WP_Error {
+		$token = $this->getToken();
+
+		if ( $token ) {
+			return $token;
+		}
+
+		// Try refresh
+		$refreshToken = $this->getRefreshToken();
+		if ( $refreshToken ) {
+			$token = $this->refreshToken( $refreshToken );
+			if ( ! is_wp_error( $token ) ) {
+				return $token;
+			}
+		}
+
+		// fallback: login
+		return $this->login();
+	}
+
+	/**
+	 * Return token if still valid
+	 */
+	public function getToken(): ?string {
+		$token  = get_option( $this->option_token );
+		$expiry = (int) get_option( $this->option_expiry );
+
+		if ( ! $token || time() >= $expiry ) {
+			return null;
+		}
+
+		return $token;
+	}
+
+	public function getRefreshToken(): ?string {
+		return get_option( $this->option_refresh ) ?: null;
+	}
+
+	/**
+	 * Perform token refresh
+	 */
+	private function refreshToken( string $refreshToken ): string|WP_Error {
+		$existingToken = $this->getToken() ?? '';
+		$resp          = wp_remote_post( $this->baseUrl . 'authentication/refresh', [
+			'headers'   => [
+				'x-api-key'     => $this->apiKey,
+				'Content-Type'  => 'application/json',
+				'Accept'        => 'application/json',
+				'Authorization' => "Bearer $existingToken",
+			],
+			'body'      => wp_json_encode( [
+				'AccessToken'  => $existingToken,
+				'RefreshToken' => $refreshToken,
+			] ),
+			'timeout'   => 15,
+			'sslverify' => false,
+		] );
+
+		if ( is_wp_error( $resp ) ) {
+			return $resp;
+		}
+
+		$code = wp_remote_retrieve_response_code( $resp );
+		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
+
+		if ( $code === 200 && ! empty( $body['AccessToken'] ) ) {
+			$this->saveToken( $body['AccessToken'], (int) ( $body['ExpiresIn'] ?? 3600 ) );
+			if ( ! empty( $body['RefreshToken'] ) ) {
+				$this->saveRefreshToken( $body['RefreshToken'] );
+			}
+
+			return $body['AccessToken'];
+		}
+
+		// Failed refresh → clear both tokens
+		$this->clearAll();
+
+		return new WP_Error( 'refresh_failed', 'Failed to refresh token', [ 'response' => $body ] );
+	}
+
+	public function saveToken( string $token, int $expiresIn ): void {
+		update_option( $this->option_token, $token, false );
+		update_option( $this->option_expiry, time() + $expiresIn - 60, false ); // 1 min buffer
+	}
+
+	public function saveRefreshToken( string $refreshToken ): void {
+		update_option( $this->option_refresh, $refreshToken, false );
+	}
+
+	public function clearAll(): void {
+		$this->clearToken();
+		$this->clearRefreshToken();
+	}
+
+	public function clearToken(): void {
+		delete_option( $this->option_token );
+		delete_option( $this->option_expiry );
+	}
+
+	public function clearRefreshToken(): void {
+		delete_option( $this->option_refresh );
+	}
+
+	/**
+	 * Perform login
+	 */
+	private function login(): string|WP_Error {
+		$resp = wp_remote_post( $this->baseUrl . 'authentication/login', [
+			'headers'   => [
+				'x-api-key'    => $this->apiKey,
+				'Content-Type' => 'application/json',
+				'Accept'       => 'application/json',
+			],
+			'body'      => wp_json_encode( [
+				'UserName' => $this->username,
+				'Password' => $this->password,
+			] ),
+			'timeout'   => 15,
+			'sslverify' => false,
+		] );
+
+		if ( is_wp_error( $resp ) ) {
+			return $resp;
+		}
+
+		$code = wp_remote_retrieve_response_code( $resp );
+		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
+
+		if ( $code !== 200 || empty( $body['AccessToken'] ) ) {
+			return new WP_Error( 'auth_failed', 'Failed to get token', [ 'response' => $body ] );
+		}
+
+		$this->saveToken( $body['AccessToken'], (int) ( $body['ExpiresIn'] ?? 3600 ) );
+		if ( ! empty( $body['RefreshToken'] ) ) {
+			$this->saveRefreshToken( $body['RefreshToken'] );
+		}
+
+		return $body['AccessToken'];
+	}
+}

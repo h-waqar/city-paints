@@ -5,7 +5,12 @@ namespace CityPaintsERP;
 use CityPaintsERP\Admin\ProductSyncButton;
 use CityPaintsERP\Admin\SettingsPage;
 use CityPaintsERP\Api\ApiClient;
+use CityPaintsERP\Debug\DebugLogger;
 use CityPaintsERP\Includes\Enqueue;
+use CityPaintsERP\Woo\AddToCart;
+use CityPaintsERP\Woo\AdminOrderMeta;
+use CityPaintsERP\Woo\Checkout;
+use CityPaintsERP\Woo\PlaceOrder;
 
 class Core {
 	private ?ApiClient $apiClient = null;
@@ -17,11 +22,20 @@ class Core {
 			new SettingsPage();
 			new ProductSyncButton();
 
-//			$call = new ProductApi();
+//			$api  = new ProductApi();
+//			$call = new ProductMapper( $api );
+//			$call->fetchMegaProducts();
 //			$call->listProducts();
 
-
 		}
+		new DebugLogger();
+
+//		new ShortCodes();
+
+		new AddToCart();
+		new Checkout();
+		new PlaceOrder();
+		new AdminOrderMeta();
 
 		new Enqueue();
 	}

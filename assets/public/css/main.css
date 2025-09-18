@@ -1,0 +1,27 @@
+.citypaints-product-card img {
+    height: 180px; /* slightly reduced */
+    object-fit: cover;
+}
+
+.citypaints-product-card .card-title {
+    font-size: 1rem; /* smaller */
+    font-weight: 600;
+}
+
+.citypaints-product-card .card-text {
+    font-size: 0.95rem;
+    margin-bottom: 0;
+}
+
+.citypaints-product-card .card-body {
+    padding: 0.75rem 0.5rem; /* tighter */
+}
+
+.citypaints-product-card .card-footer {
+    padding: 0.5rem;
+}
+
+.citypaints-product-card .btn {
+    padding: 0.25rem 0.5rem; /* smaller button */
+    font-size: 0.85rem;
+}

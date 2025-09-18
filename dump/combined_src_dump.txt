@@ -1,0 +1,1809 @@
+/*
+  Combined PHP source dump
+  Generated: '"'"'$(date -u +"%Y-%m-%d %H:%M:%SZ")'"'"'
+  Source directory: ./src
+  --- Files concatenated below ---
+*/
+
+
+/* ======================================================
+   FILE: ./src/Admin/ProductSyncButton.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP\Admin;
+
+
+use CityPaintsERP\Sync\SyncManager;
+use Throwable;
+
+class ProductSyncButton {
+
+//	private $fetch;
+
+	public function __construct() {
+		// Add button in Products list page toolbar
+		add_action( 'manage_posts_extra_tablenav', [ $this, 'renderButton' ], 20, 1 );
+
+		// Register AJAX action
+		add_action( 'wp_ajax_citypaints_sync_products', [ $this, 'handleSync' ] );
+
+//		$this->fetch = new ProductApi();
+//		$api         = new ProductApi();
+//		$this->fetch = new ProductMapper( $api );
+	}
+
+	public function renderButton( string $which ): void {
+		$screen = get_current_screen();
+
+		// Only on Products list table, and only on the top toolbar row
+		if ( $screen && $screen->id === 'edit-product' && $which === 'top' ) {
+			echo '<div class="alignleft actions">';
+			echo '<button id="citypaints-sync-products" class="button button-primary">';
+			echo esc_html__( 'Sync Products from ERP', 'citypaints-erp-sync' );
+			echo '</button>';
+			echo '</div>';
+		}
+	}
+
+	public function handleSync(): void {
+		try {
+			check_ajax_referer( 'citypaints_sync', 'nonce' );
+
+			if ( ! current_user_can( 'manage_woocommerce' ) ) {
+				wp_send_json_error( [ 'message' => 'Permission denied' ], 403 );
+			}
+
+			// Just call your sync function
+			$this->syncProducts();
+
+		} catch ( Throwable $e ) {
+			wp_send_json_error( [
+				'message' => $e->getMessage(),
+				'trace'   => $e->getTraceAsString(),
+			], 500 );
+		}
+	}
+
+	private function syncProducts(): void {
+		$syncManager = new SyncManager();
+
+		$syncManager->syncProducts();
+	}
+
+}
+
+
+/* ======================================================
+   FILE: ./src/Admin/SettingsPage.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP\Admin;
+
+class SettingsPage
+{
+    private string $option_group = 'citypaints_erp_options';
+    private string $option_name  = 'citypaints_erp_settings';
+
+    public function __construct()
+    {
+        add_action('admin_menu', [$this, 'registerMenu']);
+        add_action('admin_init', [$this, 'registerSettings']);
+    }
+
+    public function registerMenu(): void
+    {
+        add_options_page(
+            'CityPaints ERP',
+            'CityPaints ERP',
+            'manage_options',
+            'citypaints-erp',
+            [$this, 'renderPage']
+        );
+    }
+
+    public function registerSettings(): void
+    {
+        register_setting($this->option_group, $this->option_name);
+
+        add_settings_section(
+            'citypaints_erp_main',
+            'API Settings',
+            null,
+            'citypaints-erp'
+        );
+
+        $fields = [
+            'base_url' => 'API Base URL',
+            'username' => 'Username',
+            'password' => 'Password',
+            'api_key'  => 'API Key',
+        ];
+
+        foreach ($fields as $key => $label) {
+            add_settings_field(
+                $key,
+                $label,
+                function () use ($key) {
+                    $options = get_option($this->option_name);
+                    $value   = $options[$key] ?? '';
+                    $type    = $key === 'password' ? 'password' : 'text';
+                    printf(
+                        '<input type="%s" name="%s[%s]" value="%s" class="regular-text">',
+                        esc_attr($type),
+                        esc_attr($this->option_name),
+                        esc_attr($key),
+                        esc_attr($value)
+                    );
+                },
+                'citypaints-erp',
+                'citypaints_erp_main'
+            );
+        }
+    }
+
+    public function renderPage(): void
+    {
+        ?>
+        <div class="wrap">
+            <h1>CityPaints ERP Settings</h1>
+            <form method="post" action="options.php">
+                <?php
+                settings_fields($this->option_group);
+                do_settings_sections('citypaints-erp');
+                submit_button();
+                ?>
+            </form>
+        </div>
+        <?php
+    }
+
+    public function getSettings(): array
+    {
+        return get_option($this->option_name, []);
+    }
+}
+
+
+/* ======================================================
+   FILE: ./src/Api/ApiClient.php
+   ====================================================== */
+
+<?php
+
+
+namespace CityPaintsERP\Api;
+
+use Exception;
+use WP_Error;
+
+class ApiClient {
+	private string $baseUrl;
+	private string $username;
+	private string $password;
+	private string $apiKey;
+	private AuthManager $auth;
+
+	/**
+	 * @throws Exception
+	 */
+	public function __construct() {
+		$options = get_option( 'citypaints_erp_settings', [] );
+
+		if ( empty( $options['username'] ?? '' ) || empty( $options['password'] ?? '' ) || empty( $options['base_url'] ?? '' ) || empty( $options['api_key'] ?? '' ) ) {
+			throw new Exception( 'API credentials not set in settings.' );
+		}
+
+		$this->baseUrl  = rtrim( $options['base_url'], '/' ) . '/';
+		$this->username = $options['username'];
+		$this->password = $options['password'];
+		$this->apiKey   = $options['api_key'];
+		$this->auth     = new AuthManager();
+//		$this->auth->saveToken( 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjdlYTQzZjlhLTVhNDAtNDFlMi1iZWRiLWM1N2RjYTQzZWIyNSJ9.eyJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy93cy8yMDA1LzA1L2lkZW50aXR5L2NsYWltcy9uYW1lIjoiRDRXZWJEZXNpZ24iLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3JvbGUiOlsiU3RhdGljIiwiV2ViT3JkZXJzIl0sImV4cCI6MTc1NzkzMTQ2MSwiaXNzIjoid3d3LnByb2Z0ZWNrLmllIiwiYXVkIjoiN2VhNDNmOWEtNWE0MC00MWUyLWJlZGItYzU3ZGNhNDNlYjI1In0.U9kgvzco_4QMoVNk_7uayHZ7SznpilMEJFxfSQ0K4Yk', 60 );
+//		$this->auth->saveRefreshToken( 'h1gA3NsqKfgi+U1Zbo62G9FJK8LDlhUFEFfGwQzTVsc=', 60 );
+	}
+
+	/**
+	 * GET request
+	 */
+	public function get( string $endpoint, array $params = [] ): array|WP_Error {
+		return $this->request( 'GET', $endpoint, $params );
+	}
+
+	/**
+	 * Main request
+	 */
+
+	private function request( string $method, string $endpoint, array $params = [], array $body = [] ): array|WP_Error {
+		global $CLOGGER;
+
+		// Ensure endpoint URL
+		$url = $this->baseUrl . ltrim( $endpoint, '/' );
+		if ( ! empty( $params ) ) {
+			$url = add_query_arg( $params, $url );
+		}
+
+		// Ensure we have a token (will call refreshToken() if missing)
+//		$token = $this->auth->getToken();
+//		$CLOGGER->log( "accessToken = $token" );
+//		if ( ! $token ) {
+//			$token = $this->refreshToken();
+//			if ( is_wp_error( $token ) ) {
+//				return $token;
+//			}
+//		}
+
+		$token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IjdlYTQzZjlhLTVhNDAtNDFlMi1iZWRiLWM1N2RjYTQzZWIyNSJ9.eyJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy93cy8yMDA1LzA1L2lkZW50aXR5L2NsYWltcy9uYW1lIjoiRDRXZWJEZXNpZ24iLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3JvbGUiOlsiU3RhdGljIiwiV2ViT3JkZXJzIl0sImV4cCI6MTc1ODA5Mzk2NywiaXNzIjoid3d3LnByb2Z0ZWNrLmllIiwiYXVkIjoiN2VhNDNmOWEtNWE0MC00MWUyLWJlZGItYzU3ZGNhNDNlYjI1In0.YwJziHbpDEmrJm1NKr4Qvk5soYhSOvhJgzhQh27KUnM';
+
+		$attempt      = 0;
+		$maxAttempts  = 2; // initial + one retry after refresh
+		$lastResponse = null;
+
+		//					'x-api-key'     => $this->apiKey,
+		while ( $attempt < $maxAttempts ) {
+			$args = [
+				'method'    => $method,
+				'headers'   => [
+					'Content-Type'  => 'application/json',
+					'Accept'        => 'application/json',
+					'x-api-key'     => "7ea43f9a-5a40-41e2-bedb-c57dca43eb25",
+					'Authorization' => "Bearer {$token}",
+				],
+				'timeout'   => 20,
+				'sslverify' => false,
+			];
+
+			if ( in_array( $method, [ 'POST', 'PUT', 'PATCH' ], true ) && ! empty( $body ) ) {
+				$args['body'] = wp_json_encode( $body );
+			}
+
+			if ( isset( $CLOGGER ) ) {
+				$CLOGGER->log( "ApiClient Request + ARGS: {$method} {$url}", $args );
+			}
+
+			$response     = wp_remote_request( $url, $args );
+			$lastResponse = $response;
+
+			if ( is_wp_error( $response ) ) {
+				return $response;
+			}
+
+			$code = wp_remote_retrieve_response_code( $response );
+			$raw  = wp_remote_retrieve_body( $response );
+			$data = null;
+			if ( $raw !== '' ) {
+				$data = json_decode( $raw, true );
+				if ( $data === null && json_last_error() !== JSON_ERROR_NONE ) {
+					// Invalid JSON
+					return new WP_Error( 'invalid_json', 'Invalid JSON from API', [
+						'http_code' => $code,
+						'raw_body'  => $raw,
+					] );
+				}
+			}
+
+			// If unauthorized -> clear token and try refresh once
+			if ( $code === 401 && $attempt === 0 ) {
+				if ( isset( $CLOGGER ) ) {
+					$CLOGGER->warn( "ApiClient 401, attempting token refresh for {$endpoint}", [
+						'response_headers' => $response['headers'] ?? null,
+					] );
+				}
+				// Clear cached token and try refresh
+				$this->auth->clearToken();
+				$token = $this->refreshToken();
+				if ( is_wp_error( $token ) ) {
+					return $token;
+				}
+				$attempt ++;
+				// loop to retry with new token
+				continue;
+			}
+
+			// Success (2xx)
+			if ( $code >= 200 && $code < 300 ) {
+				return is_array( $data ) ? $data : [];
+			}
+
+			// Non-2xx: return a WP_Error with body + code
+			return new WP_Error( 'api_http_error', "API returned HTTP {$code}", [
+				'http_code' => $code,
+				'body'      => $data ?? $raw,
+				'raw'       => $raw,
+			] );
+		}
+
+		// fallback
+		return new WP_Error( 'api_error', 'API request failed', [ 'response' => $lastResponse ] );
+	}
+
+
+	/**
+	 * Refresh token
+	 */
+	private function refreshToken(): string|WP_Error {
+		$refreshToken = $this->auth->getRefreshToken();
+
+		// Try refresh if we have a refresh token
+		if ( $refreshToken ) {
+			$existingToken = $this->auth->getToken() ?? '';
+			$resp          = wp_remote_post( $this->baseUrl . 'authentication/refresh', [
+				'headers'   => [
+					'x-api-key'     => $this->apiKey,
+					'Content-Type'  => 'application/json',
+					'Accept'        => 'application/json',
+					'Authorization' => "Bearer $existingToken",
+				],
+				'body'      => wp_json_encode( [
+					'AccessToken'  => $existingToken,
+					'RefreshToken' => $refreshToken,
+				] ),
+				'timeout'   => 15,
+				'sslverify' => false,
+			] );
+
+			if ( ! is_wp_error( $resp ) ) {
+				$code = wp_remote_retrieve_response_code( $resp );
+				$body = json_decode( wp_remote_retrieve_body( $resp ), true );
+				if ( $code === 200 && ! empty( $body['AccessToken'] ) ) {
+					$this->auth->saveToken( $body['AccessToken'], (int) ( $body['ExpiresIn'] ?? 3600 ) );
+					if ( ! empty( $body['RefreshToken'] ) ) {
+						$this->auth->saveRefreshToken( $body['RefreshToken'] );
+					}
+
+					return $body['AccessToken'];
+				}
+			}
+
+			// Failed refresh → clear both tokens
+			$this->auth->clearAll();
+		}
+
+		// Fallback: login
+		$resp = wp_remote_post( $this->baseUrl . 'authentication/login', [
+			'headers'   => [
+				'x-api-key'    => $this->apiKey,
+				'Content-Type' => 'application/json',
+				'Accept'       => 'application/json',
+			],
+			'body'      => wp_json_encode( [
+				'UserName' => $this->username,
+				'Password' => $this->password,
+			] ),
+			'timeout'   => 15,
+			'sslverify' => false,
+		] );
+
+		if ( is_wp_error( $resp ) ) {
+			return $resp;
+		}
+
+		$code = wp_remote_retrieve_response_code( $resp );
+		$body = json_decode( wp_remote_retrieve_body( $resp ), true );
+
+		if ( $code !== 200 || empty( $body['AccessToken'] ) ) {
+			return new WP_Error( 'auth_failed', 'Failed to get token', [ 'response' => $body ] );
+		}
+
+		$this->auth->saveToken( $body['AccessToken'], (int) ( $body['ExpiresIn'] ?? 3600 ) );
+		if ( ! empty( $body['RefreshToken'] ) ) {
+			$this->auth->saveRefreshToken( $body['RefreshToken'] );
+		}
+
+		return $body['AccessToken'];
+	}
+
+
+	/**
+	 * POST request
+	 */
+	public function post( string $endpoint, array $body = [] ): array|WP_Error {
+		return $this->request( 'POST', $endpoint, [], $body );
+	}
+}
+
+
+/* ======================================================
+   FILE: ./src/Api/AuthManager.php
+   ====================================================== */
+
+<?php
+
+
+namespace CityPaintsERP\Api;
+
+class AuthManager {
+	private string $option_token = 'citypaints_erp_token';
+	private string $option_expiry = 'citypaints_erp_token_expiry';
+
+	public function getToken(): ?string {
+		$token  = get_option( $this->option_token );
+		$expiry = (int) get_option( $this->option_expiry );
+
+		if ( ! $token || time() >= $expiry ) {
+			return null;
+		}
+
+		return $token;
+	}
+
+	public function saveToken( string $token, int $expiresIn ): void {
+		update_option( $this->option_token, $token, false );
+		update_option( $this->option_expiry, time() + $expiresIn - 60, false ); // 1 min buffer
+	}
+
+	public function getRefreshToken(): ?string {
+		return get_option( 'citypaints_erp_refresh_token' ) ?: null;
+	}
+
+	public function saveRefreshToken( string $refreshToken ): void {
+		update_option( 'citypaints_erp_refresh_token', $refreshToken, false );
+	}
+
+	public function clearAll(): void {
+		$this->clearToken();
+		$this->clearRefreshToken();
+	}
+
+	public function clearToken(): void {
+		delete_option( $this->option_token );
+		delete_option( $this->option_expiry );
+	}
+
+	public function clearRefreshToken(): void {
+		delete_option( 'citypaints_erp_refresh_token' );
+	}
+
+}
+
+
+/* ======================================================
+   FILE: ./src/Api/ProductApi.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP\Api;
+
+use WP_Error;
+
+class ProductApi extends ApiClient {
+
+	public function listProducts(): array|WP_Error {
+		return $this->get( 'products' );
+	}
+
+	public function listPrices( int $id ): array|WP_Error {
+		return $this->get( "products/prices/$id" );
+	}
+
+	public function listQuantities( int $id ): array|WP_Error {
+		return $this->get( "products/quantities/$id" );
+	}
+
+	public function listImages( int $id ): array|WP_Error {
+		return $this->get( "products/images/$id" );
+	}
+
+	// Optional: fetch by SKU or id if needed
+	public function getBySku( string $sku ): array|WP_Error {
+		return $this->get( "products/sku/$sku" );
+	}
+}
+
+
+/* ======================================================
+   FILE: ./src/Core.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP;
+
+use CityPaintsERP\Admin\ProductSyncButton;
+use CityPaintsERP\Admin\SettingsPage;
+use CityPaintsERP\Api\ApiClient;
+use CityPaintsERP\Debug\DebugLogger;
+use CityPaintsERP\Includes\Enqueue;
+
+class Core {
+	private ?ApiClient $apiClient = null;
+
+	public function init(): void {
+		global $CLOGGER;
+
+		if ( is_admin() ) {
+			new SettingsPage();
+			new ProductSyncButton();
+
+//			$api  = new ProductApi();
+//			$call = new ProductMapper( $api );
+//			$call->fetchMegaProducts();
+//			$call->listProducts();
+
+			new DebugLogger();
+
+		}
+
+
+//		new ShortCodes();
+
+		new Enqueue();
+	}
+
+	public function getApiClient(): ?ApiClient {
+		return $this->apiClient;
+	}
+}
+
+
+/* ======================================================
+   FILE: ./src/Debug/DebugLogger.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP\Debug;
+
+use WC_Product_Variable;
+use WC_Product_Variation;
+
+class DebugLogger {
+
+	public function __construct() {
+		// Run on both frontend and admin
+		add_action( 'template_redirect', [ $this, 'maybeDebugProduct' ] );
+		add_action( 'admin_init', [ $this, 'maybeDebugProduct' ] );
+	}
+
+	public function maybeDebugProduct(): void {
+		if ( ! isset( $_GET['debug'] ) || $_GET['debug'] !== 'true' ) {
+			return;
+		}
+
+		// Determine the product ID
+		$product_id = 0;
+
+		if ( is_singular( 'product' ) ) {
+			global $post;
+			$product_id = $post->ID;
+		} elseif ( is_admin() && isset( $_GET['post'] ) && get_post_type( $_GET['post'] ) === 'product' ) {
+			$product_id = intval( $_GET['post'] );
+		}
+
+		if ( ! $product_id ) {
+			wp_die( '<pre>[DebugLogger] No product ID found.</pre>' );
+		}
+
+		$product = wc_get_product( $product_id );
+
+		if ( ! $product ) {
+			wp_die( '<pre>[DebugLogger] Product not found.</pre>' );
+		}
+
+		$product_data = [
+			'ID'            => $product->get_id(),
+			'SKU'           => $product->get_sku(),
+			'Name'          => $product->get_name(),
+			'Type'          => $product->get_type(),
+			'Price'         => $product->get_price(),
+			'Regular Price' => $product->get_regular_price(),
+			'Sale Price'    => $product->get_sale_price(),
+			'Stock Status'  => $product->get_stock_status(),
+			'Description'   => $product->get_description(),
+			'Short Desc'    => $product->get_short_description(),
+			'Categories'    => wp_get_post_terms( $product->get_id(), 'product_cat', [ 'fields' => 'names' ] ),
+			'Tags'          => wp_get_post_terms( $product->get_id(), 'product_tag', [ 'fields' => 'names' ] ),
+			'Meta'          => get_post_meta( $product->get_id() ),
+		];
+
+		if ( $product instanceof WC_Product_Variable ) {
+			$variations = [];
+			foreach ( $product->get_children() as $child_id ) {
+				$variation    = new WC_Product_Variation( $child_id );
+				$variations[] = [
+					'ID'    => $variation->get_id(),
+					'SKU'   => $variation->get_sku(),
+					'Price' => $variation->get_price(),
+					'Stock' => $variation->get_stock_quantity(),
+					'Meta'  => get_post_meta( $variation->get_id() ),
+				];
+			}
+			$product_data['Variations'] = $variations;
+		}
+
+		wp_die( '<pre>' . print_r( $product_data, true ) . '</pre>' );
+	}
+}
+
+
+/* ======================================================
+   FILE: ./src/Frontend/ProductDisplay.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP\Frontend;
+
+use WC_Product_Variable;
+use WP_Query;
+
+class ProductDisplay {
+
+	/**
+	 * Fetch WooCommerce variable products
+	 */
+	public function getProducts( array $args = [] ): array {
+		$defaults = [
+			'post_type'      => 'product',
+			'posts_per_page' => 12,
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+		];
+
+		$query = new WP_Query( wp_parse_args( $args, $defaults ) );
+
+		return $query->posts ?? [];
+	}
+
+	/**
+	 * Render a grid of products
+	 */
+	public function renderGrid( array $products ): string {
+		ob_start();
+		echo "<div class='row grid-item'>";
+		foreach ( $products as $post ) {
+			$product = wc_get_product( $post->ID );
+
+			include __DIR__ . '/Templates/product-grid.php';
+		}
+		echo "</div>";
+
+//		return ob_get_clean();
+		return shortcode_unautop( ob_get_clean() );
+	}
+
+	/**
+	 * Render a single product (for shortcode or block)
+	 */
+	public function renderSingle( WC_Product_Variable $product ): string {
+		ob_start();
+		include __DIR__ . '/Templates/product-single.php';
+
+		return ob_get_clean();
+	}
+
+	/**
+	 * Get variations for a variable product
+	 */
+	public function getVariations( WC_Product_Variable $product ): array {
+		return $product->get_children()
+			? array_map( fn( $id ) => wc_get_product( $id ), $product->get_children() )
+			: [];
+	}
+}
+
+
+/* ======================================================
+   FILE: ./src/Frontend/ShortCodes.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP\Frontend;
+
+class ShortCodes {
+
+	public function __construct() {
+		add_shortcode( 'citypaints_products', [ $this, 'productsShortcode' ] );
+	}
+
+	/**
+	 * Main products shortcode
+	 */
+	public function productsShortcode( $atts ): string {
+		$atts = shortcode_atts( [
+			'limit'  => 12,
+			'layout' => 'grid', // future: 'list'
+		], $atts, 'citypaints_products' );
+
+		$display  = new ProductDisplay();
+		$products = $display->getProducts( [ 'posts_per_page' => $atts['limit'] ] );
+
+		return $display->renderGrid( $products );
+	}
+}
+
+
+/* ======================================================
+   FILE: ./src/Frontend/Templates/product-grid.php
+   ====================================================== */
+
+<?php
+/** @var WC_Product $product */
+$in_stock = $product->is_in_stock();
+?>
+
+<div class="col-md-4 mb-4">
+    <div class="card citypaints-product-card h-100 shadow-sm position-relative">
+
+        <!-- Stock badge -->
+        <span class="badge position-absolute top-0 start-0 m-2 <?php echo $in_stock ? 'bg-success' : 'bg-danger'; ?>">
+            <?= $in_stock ? 'In Stock' : 'Out of Stock'; ?>
+        </span>
+
+        <!-- Product link + image -->
+        <a href="<?php echo get_permalink( $product->get_id() ); ?>" class="text-decoration-none text-dark">
+            <?php if ( $product->get_image_id() ) : ?>
+                <img src="<?php echo esc_url( wp_get_attachment_url( $product->get_image_id() ) ); ?>"
+                     class="card-img-top"
+                     alt="<?php echo esc_attr( $product->get_name() ); ?>">
+            <?php else: ?>
+                <img src="<?php echo esc_url( wc_placeholder_img_src() ); ?>"
+                     class="card-img-top"
+                     alt="<?php echo esc_attr( $product->get_name() ); ?>">
+            <?php endif; ?>
+
+            <div class="card-body text-center py-2">
+                <h6 class="card-title mb-1"><?php echo esc_html( $product->get_name() ); ?></h6>
+                <div class="card-text fw-bold text-primary mb-1">
+                    <?php
+                    // fix <br /> issue in price HTML
+                    echo str_replace( '<br />', ' ', $product->get_price_html() );
+                    ?>
+                </div>
+            </div>
+        </a>
+
+        <!-- Footer -->
+        <div class="card-footer bg-white border-top-0 py-2">
+            <?php if ( $product->is_type( 'variable' ) ): ?>
+                <select class="form-select form-select-sm unit-variations mb-2"
+                        id="unit-variations-<?php echo $product->get_id(); ?>"
+                        data-product-id="<?php echo $product->get_id(); ?>">
+                    <?php foreach ( $product->get_available_variations() as $variation ): ?>
+                        <option value="<?php echo esc_attr( $variation['variation_id'] ); ?>">
+                            <?php echo esc_html( $variation['attributes']['attribute_pa_unit_size'] ?? '' ); ?>
+                            – <?php echo wc_price( $variation['display_price'] ); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            <?php endif; ?>
+
+            <a href="<?php echo esc_url( get_permalink( $product->get_id() ) ); ?>"
+               class="btn btn-primary w-100 d-block text-center mt-2">View Product</a>
+
+
+        </div>
+
+    </div>
+</div>
+
+
+/* ======================================================
+   FILE: ./src/Frontend/Templates/product-single.php
+   ====================================================== */
+
+
+
+/* ======================================================
+   FILE: ./src/Helpers/Logger.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP\Helpers;
+
+defined('ABSPATH') || exit;
+
+/**
+ * File-based logger for CityPaintsERP plugin.
+ *
+ * - Writes logs under: {plugin_root}/logs/YYYY-MM-DD/{CallerName}_HH-mm.log
+ * - If startSession() is used, writes to a single session file instead.
+ * - Safe concurrent writes via fopen + flock.
+ * - Convenience methods: info(), debug(), warn(), error(), critical().
+ */
+class Logger
+{
+    private string $pluginRoot;
+    private string $baseLogDir;
+    private string $prefix;
+    private ?string $sessionFile = null;
+    private bool $enabled = true;
+    private int $retentionDays = 30;
+
+    /**
+     * @param string      $prefix       prefix used for filenames when caller can't be detected
+     * @param string|null $pluginRoot   path to plugin root; default autodetected
+     * @param bool        $enabled      enable/disable logging
+     * @param int         $retentionDays delete logs older than this (days) when cleanOldLogs() is called
+     */
+    public function __construct(string $prefix = 'citypaints', ?string $pluginRoot = null, bool $enabled = true, int $retentionDays = 30)
+    {
+        $this->prefix = preg_replace('/[^A-Za-z0-9_\-]/', '_', $prefix);
+        $this->retentionDays = max(0, (int) $retentionDays);
+
+        if (defined('CITYPAINTS_ENABLE_LOGS') && !CITYPAINTS_ENABLE_LOGS) {
+            $this->enabled = false;
+            return;
+        }
+
+        // resolve plugin root if not provided
+        if ($pluginRoot) {
+            $this->pluginRoot = rtrim($pluginRoot, '/\\');
+        } else {
+            // __DIR__ = .../src/Helpers
+            $this->pluginRoot = dirname(dirname(__DIR__)); // plugin root (../..)
+        }
+
+        $this->baseLogDir = $this->pluginRoot . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR;
+
+        if (!file_exists($this->baseLogDir)) {
+            wp_mkdir_p($this->baseLogDir);
+        }
+    }
+
+    /**
+     * Start a new session file. Subsequent writes use this file until endSession() or new startSession().
+     *
+     * @param string|null $sessionPrefix optional friendly name for the session file
+     * @return string path to the created session file
+     */
+    public function startSession(?string $sessionPrefix = null): string
+    {
+        $sessionPrefix = $sessionPrefix ? preg_replace('/[^A-Za-z0-9_\-]/', '_', $sessionPrefix) : 'session';
+        $ts = current_time('timestamp');
+        $date = date('Y-m-d', $ts);
+        $time = date('H-i-s', $ts);
+        $uniq = uniqid('', true);
+
+        $dir = $this->baseLogDir . $date . DIRECTORY_SEPARATOR;
+        if (!file_exists($dir)) {
+            wp_mkdir_p($dir);
+        }
+
+        $filename = sprintf('%s_%s_%s_%s.log', $this->prefix, $sessionPrefix, $time, str_replace('.', '_', $uniq));
+        $filepath = $dir . $filename;
+
+        // touch file
+        $fp = @fopen($filepath, 'a');
+        if ($fp) {
+            fclose($fp);
+        }
+
+        $this->sessionFile = $filepath;
+
+        return $filepath;
+    }
+
+    /**
+     * End session mode; subsequent writes will go to per-caller per-minute files.
+     */
+    public function endSession(): void
+    {
+        $this->sessionFile = null;
+    }
+
+    /**
+     * General write method (level aware).
+     *
+     * @param string $level  e.g. INFO, DEBUG, ERROR
+     * @param string $title
+     * @param mixed  $context
+     * @return string|false  filepath written to or false on failure/disabled
+     */
+    public function write(string $level, string $title, $context = null)
+    {
+        if (!$this->enabled) {
+            return false;
+        }
+
+        $ts = current_time('timestamp');
+        $humanTime = date('Y-m-d H:i:s', $ts);
+
+        if ($this->sessionFile) {
+            $filepath = $this->sessionFile;
+        } else {
+            $dateFolder = date('Y-m-d', $ts);
+            $timePart = date('H-i', $ts); // hour-minute as requested
+
+            $dir = $this->baseLogDir . $dateFolder . DIRECTORY_SEPARATOR;
+            if (!file_exists($dir)) {
+                wp_mkdir_p($dir);
+            }
+
+            $caller = $this->detectCaller();
+            $filename = "{$caller}_{$timePart}.log";
+            $filepath = $dir . $filename;
+        }
+
+        // Build content
+        $content  = "[{$humanTime}] [{$level}] {$title}\n";
+        $content .= str_repeat('-', 60) . "\n";
+
+        if ($context !== null) {
+            if (is_scalar($context)) {
+                $content .= (string) $context . "\n";
+            } else {
+                // arrays / objects / exceptions
+                if ($context instanceof \Throwable) {
+                    $content .= "Exception: " . $context->getMessage() . "\n";
+                    $content .= $context->getTraceAsString() . "\n";
+                } else {
+                    $content .= print_r($context, true);
+                }
+            }
+            $content .= "\n";
+        }
+
+        // Write with lock
+        $written = false;
+        $fp = @fopen($filepath, 'a');
+        if ($fp) {
+            if (flock($fp, LOCK_EX)) {
+                fwrite($fp, $content);
+                fflush($fp);
+                flock($fp, LOCK_UN);
+                $written = true;
+            }
+            fclose($fp);
+        } else {
+            // fallback to file_put_contents in case fopen fails (rare)
+            @file_put_contents($filepath, $content, FILE_APPEND | LOCK_EX);
+            $written = true;
+        }
+
+        return $written ? $filepath : false;
+    }
+
+    /* ----------------- Convenience level methods ----------------- */
+
+    public function info(string $title, $context = null)
+    {
+        return $this->write('INFO', $title, $context);
+    }
+
+    public function debug(string $title, $context = null)
+    {
+        return $this->write('DEBUG', $title, $context);
+    }
+
+    public function warn(string $title, $context = null)
+    {
+        return $this->write('WARN', $title, $context);
+    }
+
+    public function error(string $title, $context = null)
+    {
+        return $this->write('ERROR', $title, $context);
+    }
+
+    public function critical(string $title, $context = null)
+    {
+        return $this->write('CRITICAL', $title, $context);
+    }
+
+    // alias
+    public function log(string $title, $context = null)
+    {
+        return $this->info($title, $context);
+    }
+
+    /* ----------------- Helpers & config ----------------- */
+
+    /**
+     * Return the currently active log file (session or computed file for current minute + caller).
+     */
+    public function getCurrentLogFile(): string
+    {
+        if ($this->sessionFile) {
+            return $this->sessionFile;
+        }
+
+        $ts = current_time('timestamp');
+        $dateFolder = date('Y-m-d', $ts);
+        $timePart = date('H-i', $ts);
+        $dir = $this->baseLogDir . $dateFolder . DIRECTORY_SEPARATOR;
+        $caller = $this->detectCaller();
+        return $dir . "{$caller}_{$timePart}.log";
+    }
+
+    /**
+     * Enable or disable logging at runtime.
+     */
+    public function setEnabled(bool $enabled): void
+    {
+        $this->enabled = (bool) $enabled;
+    }
+
+    /**
+     * Set retention days for cleanOldLogs.
+     */
+    public function setRetentionDays(int $days): void
+    {
+        $this->retentionDays = max(0, $days);
+    }
+
+    /**
+     * Remove log directories older than retentionDays.
+     *
+     * @return int number of directories removed
+     */
+    public function cleanOldLogs(): int
+    {
+        if ($this->retentionDays <= 0) {
+            return 0;
+        }
+
+        $removed = 0;
+        $items = glob($this->baseLogDir . '*', GLOB_ONLYDIR);
+        if (!$items) {
+            return 0;
+        }
+
+        $now = current_time('timestamp');
+
+        foreach ($items as $dir) {
+            // directory name expected YYYY-MM-DD
+            $basename = basename($dir);
+            $ts = strtotime($basename);
+            if ($ts === false) {
+                continue;
+            }
+
+            $ageDays = ($now - $ts) / DAY_IN_SECONDS;
+            if ($ageDays > $this->retentionDays) {
+                $this->rrmdir($dir);
+                $removed++;
+            }
+        }
+
+        return $removed;
+    }
+
+    /**
+     * Recursive remove directory.
+     */
+    private function rrmdir(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+        $objects = scandir($dir);
+        foreach ($objects as $object) {
+            if ($object === '.' || $object === '..') {
+                continue;
+            }
+            $path = $dir . DIRECTORY_SEPARATOR . $object;
+            if (is_dir($path)) {
+                $this->rrmdir($path);
+            } else {
+                @unlink($path);
+            }
+        }
+        @rmdir($dir);
+    }
+
+    /**
+     * Try detect the caller class name (or fallback to file name).
+     */
+    private function detectCaller(): string
+    {
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8);
+        foreach ($trace as $frame) {
+            if (!empty($frame['class']) && $frame['class'] !== __CLASS__) {
+                // sanitize class name (replace backslashes)
+                return $this->sanitizeCallerName($frame['class']);
+            }
+            if (!empty($frame['file']) && strpos($frame['file'], 'Logger.php') === false) {
+                return $this->sanitizeCallerName(pathinfo($frame['file'], PATHINFO_FILENAME));
+            }
+        }
+
+        return $this->prefix;
+    }
+
+    /**
+     * Sanitize caller names to be safe as filenames.
+     */
+    private function sanitizeCallerName(string $name): string
+    {
+        // replace namespace separators, spaces, and other non-alphanum chars with underscore
+        $n = str_replace('\\', '_', $name);
+        $n = preg_replace('/[^A-Za-z0-9_\-]/', '_', $n);
+        // limit length
+        return substr($n, 0, 80);
+    }
+}
+
+
+/* ======================================================
+   FILE: ./src/Includes/Enqueue.php
+   ====================================================== */
+
+<?php
+//
+//namespace CityPaintsERP\Includes;
+//
+//class Enqueue {
+//	private array $adminAssets = [];
+//	private array $frontendAssets = [];
+//
+//	public function __construct() {
+//		if ( is_admin() ) {
+//			add_action( 'admin_enqueue_scripts', [ $this, 'enqueueAdmin' ] );
+//		} else {
+//			add_action( 'wp_enqueue_scripts', [ $this, 'enqueueFrontend' ] );
+//		}
+//
+//		// Register admin assets
+//		$this->adminAssets = [
+//			'citypaints-admin-sync' => [
+//				'src'      => 'assets/admin/js/product-sync.js',
+//				'deps'     => [ 'jquery' ],
+//				'localize' => [
+//					'CityPaintsSync' => [
+//						'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+//						'nonce'   => wp_create_nonce( 'citypaints_sync' )
+//					]
+//				],
+//				'screens'  => [ 'edit-product' ],
+//			],
+//		];
+//
+//		// Register frontend assets
+//		$this->frontendAssets = [
+//			'citypaints-main-css' => [
+//				'src'  => 'assets/public/css/main.css',
+//				'deps' => [],
+//				'ver'  => null,
+//			],
+//			'citypaints-main-js'  => [
+//				'src'  => 'assets/public/js/main.js',
+//				'deps' => [ 'jquery' ],
+//				'ver'  => null,
+//			],
+//		];
+//
+//	}
+//
+//	public function enqueueAdmin(): void {
+//		$screen = get_current_screen();
+//
+//		foreach ( $this->adminAssets as $handle => $asset ) {
+//			if ( ! empty( $asset['screens'] ) && ( ! $screen || ! in_array( $screen->id, $asset['screens'], true ) ) ) {
+//				continue;
+//			}
+//
+//			$src = CITYPAINTS_PLUGIN_URL . $asset['src'];
+//			$ver = file_exists( CITYPAINTS_PLUGIN_DIR . $asset['src'] ) ? filemtime( CITYPAINTS_PLUGIN_DIR . $asset['src'] ) : '1.0.0';
+//
+//			wp_enqueue_script( $handle, $src, $asset['deps'] ?? [], $ver, true );
+//
+//			if ( ! empty( $asset['localize'] ) ) {
+//				foreach ( $asset['localize'] as $objectName => $data ) {
+//					wp_localize_script( $handle, $objectName, $data );
+//				}
+//			}
+//		}
+//	}
+//
+//	public function enqueueFrontend(): void {
+//		foreach ( $this->frontendAssets as $handle => $asset ) {
+//			$src = CITYPAINTS_PLUGIN_URL . $asset['src'];
+//			$ver = file_exists( CITYPAINTS_PLUGIN_DIR . $asset['src'] ) ? filemtime( CITYPAINTS_PLUGIN_DIR . $asset['src'] ) : '1.0.0';
+//
+//			wp_enqueue_script( $handle, $src, $asset['deps'] ?? [], $ver, true );
+//		}
+//	}
+//}
+
+
+namespace CityPaintsERP\Includes;
+
+class Enqueue {
+	private array $adminAssets = [];
+	private array $frontendAssets = [];
+
+	public function __construct() {
+		if ( is_admin() ) {
+			add_action( 'admin_enqueue_scripts', [ $this, 'enqueueAdmin' ] );
+		} else {
+			add_action( 'wp_enqueue_scripts', [ $this, 'enqueueFrontend' ] );
+		}
+
+		// Register admin assets
+		$this->adminAssets = [
+			'citypaints-admin-sync' => [
+				'type'     => 'script',
+				'src'      => 'assets/admin/js/product-sync.js',
+				'deps'     => [ 'jquery' ],
+				'localize' => [
+					'CityPaintsSync' => [
+						'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+						'nonce'   => wp_create_nonce( 'citypaints_sync' ),
+					],
+				],
+				'screens'  => [ 'edit-product' ],
+			],
+		];
+
+		// Register frontend assets
+		$this->frontendAssets = [
+//			'citypaints-main-css' => [
+//				'type' => 'style',
+//				'src'  => 'assets/public/css/main.css',
+//				'deps' => [],
+//			],
+//			'bootstrap-css'       => [
+//				'type' => 'style',
+//				'src'  => 'assets/public/css/bootstrap.min.css',
+//				'deps' => [],
+//			],
+//			'citypaints-main-js'  => [
+//				'type' => 'script',
+//				'src'  => 'assets/public/js/main.js',
+//				'deps' => [ 'jquery' ],
+//			],
+//			'bootstrap-js'        => [
+//				'type' => 'script',
+//				'src'  => 'assets/public/js/bootstrap.min.js',
+//				'deps' => [ 'jquery' ],
+//			],
+		];
+	}
+
+	public function enqueueAdmin(): void {
+		$screen = get_current_screen();
+
+		foreach ( $this->adminAssets as $handle => $asset ) {
+			if ( ! empty( $asset['screens'] ) && ( ! $screen || ! in_array( $screen->id, $asset['screens'], true ) ) ) {
+				continue;
+			}
+			$this->enqueueAsset( $handle, $asset );
+		}
+	}
+
+	private function enqueueAsset( string $handle, array $asset ): void {
+		$src = CITYPAINTS_PLUGIN_URL . $asset['src'];
+		$ver = file_exists( CITYPAINTS_PLUGIN_DIR . $asset['src'] )
+			? filemtime( CITYPAINTS_PLUGIN_DIR . $asset['src'] )
+			: '1.0.0';
+
+		if ( $asset['type'] === 'style' ) {
+			wp_enqueue_style( $handle, $src, $asset['deps'] ?? [], $ver );
+		} else {
+			wp_enqueue_script( $handle, $src, $asset['deps'] ?? [], $ver, true );
+
+			// Handle localization if provided
+			if ( ! empty( $asset['localize'] ) ) {
+				foreach ( $asset['localize'] as $objectName => $data ) {
+					wp_localize_script( $handle, $objectName, $data );
+				}
+			}
+		}
+	}
+
+	public function enqueueFrontend(): void {
+		foreach ( $this->frontendAssets as $handle => $asset ) {
+			$this->enqueueAsset( $handle, $asset );
+		}
+	}
+}
+
+
+/* ======================================================
+   FILE: ./src/Models/ProductModel.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP\Models;
+
+class ProductModel {
+
+}
+
+/* ======================================================
+   FILE: ./src/Sync/ProductMapper.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP\Sync;
+
+use CityPaintsERP\Api\ProductApi;
+use WP_Error;
+
+class ProductMapper {
+	private ProductApi $productApi;
+
+	public function __construct( ProductApi $api ) {
+		$this->productApi = $api;
+	}
+
+	/**
+	 * Fetch products and fetch prices, quantities, images for each individually
+	 */
+	public function fetchMegaProducts(): array|WP_Error {
+		global $CLOGGER;
+
+		$products = $this->productApi->listProducts();
+		if ( is_wp_error( $products ) ) {
+			if ( isset( $CLOGGER ) ) {
+				$CLOGGER->error( 'Failed to fetch products', [ 'error' => $products->get_error_messages() ] );
+			}
+
+			return $products;
+		}
+
+		if ( isset( $CLOGGER ) ) {
+			$CLOGGER->info( 'Fetched products count', [ 'count' => count( $products ) ] );
+		}
+
+		$megaProducts = [];
+
+		foreach ( $products as $product ) {
+			$id = $product['Id'] ?? null;
+			if ( ! $id ) {
+				if ( isset( $CLOGGER ) ) {
+					$CLOGGER->warning( 'Product missing Id, skipping', [ 'product' => $product ] );
+				}
+				continue;
+			}
+
+			if ( isset( $CLOGGER ) ) {
+				$CLOGGER->info( "Processing product {$id}", [ 'SKU' => $product['SKU'] ?? null ] );
+			}
+
+			$errors = [];
+
+			// per-product calls
+			$pricesResp = $this->productApi->listPrices( (int) $id );
+			if ( is_wp_error( $pricesResp ) ) {
+				$errors[]      = [
+					'prices' => $pricesResp->get_error_messages(),
+					'code'   => $pricesResp->get_error_code()
+				];
+				$productPrices = [];
+				if ( isset( $CLOGGER ) ) {
+					$CLOGGER->error( "Prices fetch failed for {$id}", $pricesResp->get_error_messages() );
+				}
+			} else {
+				// unwrap structure: may be wrapper { Id, SKU, Product_Prices }
+				$productPrices = $pricesResp['Product_Prices'] ?? ( is_array( $pricesResp ) ? $pricesResp : [] );
+			}
+
+			$qtysResp = $this->productApi->listQuantities( (int) $id );
+			if ( is_wp_error( $qtysResp ) ) {
+				$errors[]    = [ 'qtys' => $qtysResp->get_error_messages(), 'code' => $qtysResp->get_error_code() ];
+				$productQtys = [];
+				if ( isset( $CLOGGER ) ) {
+					$CLOGGER->error( "Qtys fetch failed for {$id}", $qtysResp->get_error_messages() );
+				}
+			} else {
+				$productQtys = $qtysResp['Product_Qtys'] ?? ( is_array( $qtysResp ) ? $qtysResp : [] );
+			}
+
+			$imagesResp = $this->productApi->listImages( (int) $id );
+			if ( is_wp_error( $imagesResp ) ) {
+				$errors[]      = [
+					'images' => $imagesResp->get_error_messages(),
+					'code'   => $imagesResp->get_error_code()
+				];
+				$productImages = [];
+				if ( isset( $CLOGGER ) ) {
+					$CLOGGER->error( "Images fetch failed for {$id}", $imagesResp->get_error_messages() );
+				}
+			} else {
+				$productImages = $imagesResp['Product_Images'] ?? ( is_array( $imagesResp ) ? $imagesResp : [] );
+			}
+
+			// attach the unwrapped arrays into product so normalize() can use them
+			$product['Product_Prices'] = $productPrices;
+			$product['Product_Qtys']   = $productQtys;
+			$product['Product_Images'] = $productImages;
+
+			// keep errors on the product (or just log — depending on what you prefer)
+			if ( ! empty( $errors ) ) {
+				$product['_sync_errors'] = $errors;
+			}
+
+//			$megaProducts[] = $this->normalize( $product );
+
+			$normalized     = $this->normalize( $product );
+			$megaProducts[] = [
+				'raw_data'   => $product,
+				'normalized' => $normalized,
+			];
+		}
+
+		$CLOGGER->log( 'Products data with RAW', $megaProducts );
+
+		return $megaProducts;
+	}
+
+
+	private function normalize( array $p ): array {
+		$units = [];
+		foreach ( $p['Product_Units'] ?? [] as $u ) {
+			$uid           = $u['Id'];
+			$units[ $uid ] = [
+				'Id'          => $uid,
+				'Short_Name'  => $u['Short_Name'] ?? '',
+				'Description' => $u['Description'] ?? '',
+				'Price'       => $this->findPriceForUnit( $p['Product_Prices'], $uid ),
+				'Stock'       => $this->findQtyForUnit( $p['Product_Qtys'], $uid ),
+				'BarCodes'    => $this->findBarcodesForUnit( $p['Product_BarCodes'], $uid ),
+				'Images'      => $this->findImagesForUnit( $p['Product_Images'], $uid ),
+			];
+		}
+
+		return [
+			'Id'          => $p['Id'],
+			'SKU'         => trim( $p['SKU'] ),
+			'Name'        => $p['Name'],
+			'Description' => $p['Full_Description'] ?? '',
+			'Units'       => $units,
+		];
+	}
+
+
+	private function findPriceForUnit( array $unitPrices, int $unitId ) {
+		// unitPrices structure: [ ['Unit_Id'=>1,'Prices'=>[...]] , ...]
+
+		foreach ( $unitPrices as $up ) {
+			if ( (int) $up['Unit_Id'] === (int) $unitId ) {
+				// find price where IsCustomerPrice true
+				foreach ( $up['Prices'] as $price ) {
+					if ( ! empty( $price['IsCustomerPrice'] ) ) {
+						return $price;
+					}
+				}
+
+				return $up['Prices'][0] ?? null;
+			}
+		}
+
+		return null;
+	}
+
+	private function findQtyForUnit( array $unitQtys, int $unitId ) {
+		foreach ( $unitQtys as $uq ) {
+			if ( (int) $uq['Unit_Id'] === (int) $unitId ) {
+				return $uq;
+			}
+		}
+
+		return null;
+	}
+
+	private function findBarcodesForUnit( array $barcodes, int $unitId ): array {
+		$out = [];
+		foreach ( $barcodes as $b ) {
+			if ( (int) $b['Id'] === (int) $unitId ) {
+				$out[] = trim( $b['BarCode'] );
+			}
+		}
+
+		return $out;
+	}
+
+	private function findImagesForUnit( array $productImages, int $unitId ) {
+		// productImages matches Product_Images structure (Unit_Id => Images)
+		foreach ( $productImages as $pi ) {
+			if ( (int) $pi['Unit_Id'] === (int) $unitId ) {
+				return $pi['Images'] ?? [];
+			}
+		}
+
+		return [];
+	}
+}
+
+
+/* ======================================================
+   FILE: ./src/Sync/SyncManager.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP\Sync;
+
+use CityPaintsERP\Api\ProductApi;
+use WC_Data_Exception;
+use WC_Product_Attribute;
+use WC_Product_Variable;
+use WC_Product_Variation;
+use WP_Error;
+
+class SyncManager {
+
+	/**
+	 * Entry point for AJAX or manual calls
+	 */
+	public function syncProducts(): void {
+		$megaProducts = $this->fetchMegaProducts();
+
+		if ( is_wp_error( $megaProducts ) ) {
+			wp_send_json_error( [
+				'message' => 'Failed to fetch products.',
+				'errors'  => $megaProducts->get_error_messages(),
+			] );
+		}
+
+		foreach ( $megaProducts as $p ) {
+			$raw        = $p['raw_data'];
+			$normalized = $p['normalized'];
+
+			$product_id = wc_get_product_id_by_sku( $p['SKU'] );
+
+			if ( $product_id ) {
+				$this->updateProduct( $product_id, $normalized, $raw );
+			} else {
+				$this->createProduct( $normalized, $raw );
+			}
+		}
+
+		wp_send_json_success( [ 'message' => 'Products synced successfully!' ] );
+	}
+
+	/**
+	 * Fetch products from ERP
+	 */
+	private function fetchMegaProducts(): array|WP_Error {
+		$api   = new ProductApi();
+		$fetch = new ProductMapper( $api );
+
+		return $fetch->fetchMegaProducts();
+	}
+
+	/**
+	 * Update an existing variable product
+	 */
+	private function updateProduct( int $product_id, array $normalized, array $raw ): void {
+		$product = new WC_Product_Variable( $product_id );
+		$product->set_name( $normalized['Name'] );
+		$product->set_description( $normalized['Description'] ?? '' );
+		$product->save();
+
+		// 🔹 Store raw ERP data in post_meta
+		update_post_meta( $product_id, '_citypaints_raw_data', wp_json_encode( $raw ) );
+
+		$this->setupAttributesAndVariations( $product, $normalized['Units'] );
+	}
+
+	/**
+	 * Ensure attributes are set and create/update variations
+	 */
+
+	private function setupAttributesAndVariations( WC_Product_Variable $product, array $units ): void {
+		$attribute_name = 'pa_unit_size';
+
+		// Ensure attribute taxonomy exists
+		$this->ensureAttributeExists( $attribute_name, 'Unit Size' );
+
+		// Collect unit labels (e.g. "1L", "5L", "10L")
+		$unit_labels = array_map( fn( $u ) => $u['Short_Name'], $units );
+
+		// Register terms in this attribute taxonomy
+		foreach ( $unit_labels as $label ) {
+			if ( ! term_exists( $label, $attribute_name ) ) {
+				wp_insert_term( $label, $attribute_name );
+			}
+		}
+
+		// Attach terms to product
+		wp_set_object_terms( $product->get_id(), $unit_labels, $attribute_name );
+
+		// Build WooCommerce attribute object
+		$attr_obj = new WC_Product_Attribute();
+		$attr_obj->set_id( wc_attribute_taxonomy_id_by_name( $attribute_name ) );
+		$attr_obj->set_name( $attribute_name );
+		$attr_obj->set_options( $unit_labels );
+		$attr_obj->set_visible( true );
+		$attr_obj->set_variation( true );
+
+		// Assign attribute to product
+		$product->set_attributes( [ $attr_obj ] );
+
+		// ✅ Set default attribute (first unit)
+		if ( ! empty( $unit_labels ) ) {
+			$product->set_default_attributes( [
+				$attribute_name => $unit_labels[0],
+			] );
+		}
+
+		$product->save();
+
+		// Create/Update variations
+		foreach ( $units as $unit ) {
+			$this->createOrUpdateVariation( $product, $unit, $attribute_name );
+		}
+	}
+
+
+	/**
+	 * Ensure WooCommerce attribute exists
+	 */
+	private function ensureAttributeExists( string $taxonomy, string $label ): void {
+		global $wpdb;
+		$attr_name = wc_sanitize_taxonomy_name( str_replace( 'pa_', '', $taxonomy ) );
+
+		$exists = $wpdb->get_var( $wpdb->prepare(
+			"SELECT attribute_id FROM {$wpdb->prefix}woocommerce_attribute_taxonomies WHERE attribute_name = %s",
+			$attr_name
+		) );
+
+		if ( ! $exists ) {
+			$wpdb->insert(
+				"{$wpdb->prefix}woocommerce_attribute_taxonomies",
+				[
+					'attribute_name'    => $attr_name,
+					'attribute_label'   => $label,
+					'attribute_type'    => 'select',
+					'attribute_orderby' => 'menu_order',
+					'attribute_public'  => 0,
+				]
+			);
+			delete_transient( 'wc_attribute_taxonomies' );
+		}
+	}
+
+	/**
+	 * Create or update a variation
+	 * @throws WC_Data_Exception
+	 */
+	private function createOrUpdateVariation( WC_Product_Variable $product, array $unit, string $attribute_name ): void {
+		// ✅ Use ERP SKU if provided, fallback to parentSKU-ID
+		$variation_sku = ! empty( $unit['SKU'] )
+			? $unit['SKU']
+			: $product->get_sku() . '-' . $unit['Id'];
+
+		$variation_id = wc_get_product_id_by_sku( $variation_sku );
+
+		if ( $variation_id ) {
+			$variation = new WC_Product_Variation( $variation_id );
+		} else {
+			$variation = new WC_Product_Variation();
+			$variation->set_parent_id( $product->get_id() );
+			$variation->set_sku( $variation_sku );
+		}
+
+		// Pricing & stock
+		$variation->set_regular_price( $unit['Price']['Selling_Price'] ?? 0 );
+		$variation->set_stock_quantity( $unit['Stock']['Quantity_On_Hand'] ?? 0 );
+		$variation->set_manage_stock( true );
+
+		// ✅ Assign correct attribute (use slug, not label)
+		$term = get_term_by( 'name', $unit['Short_Name'], $attribute_name );
+		if ( $term ) {
+			$current_attrs                    = $variation->get_attributes();
+			$current_attrs[ $attribute_name ] = $term->slug;
+			$variation->set_attributes( $current_attrs );
+		}
+
+		// ✅ Save ERP barcodes in variation meta (raw)
+		if ( ! empty( $unit['Barcodes'] ) ) {
+			update_post_meta( $variation->get_id(), '_erp_barcodes', $unit['Barcodes'] );
+		}
+
+		// Attach variation image if available
+		if ( ! empty( $unit['Images'] ) && isset( $unit['Images'][0]['Path'] ) ) {
+			$image_id = $this->attachImageFromUrl( $unit['Images'][0]['Path'] );
+			if ( $image_id ) {
+				$variation->set_image_id( $image_id );
+			}
+		}
+
+		// ✅ Assign barcode into WooCommerce GTIN/UPC/EAN/ISBN field
+		if ( ! empty( $unit['Product_BarCodes'] ) && is_array( $unit['Product_BarCodes'] ) ) {
+			$chosen_barcode = null;
+
+			foreach ( $unit['Product_BarCodes'] as $barcode ) {
+				if ( (int) $barcode['Id'] !== (int) $unit['Id'] ) {
+					continue; // skip if not for this unit
+				}
+
+				$code = trim( $barcode['BarCode'] ?? '' );
+				if ( ! $code ) {
+					continue;
+				}
+
+				// prefer long numeric codes (EAN/UPC/GTIN style)
+				if ( preg_match( '/^\d{8,}$/', $code ) ) {
+					$chosen_barcode = $code;
+					break;
+				}
+
+				// fallback: short code if nothing else found
+				if ( ! $chosen_barcode ) {
+					$chosen_barcode = $code;
+				}
+			}
+
+			if ( $chosen_barcode ) {
+				update_post_meta( $variation->get_id(), '_global_unique_id', $chosen_barcode );
+			}
+		}
+
+		$variation->save();
+	}
+
+	/**
+	 * Download and attach image from URL
+	 */
+	private function attachImageFromUrl( string $url ): ?int {
+		$image_id = attachment_url_to_postid( $url );
+		if ( $image_id ) {
+			return $image_id;
+		}
+
+		$tmp = download_url( $url );
+		if ( is_wp_error( $tmp ) ) {
+			return null;
+		}
+
+		$file_array = [
+			'name'     => basename( $url ),
+			'tmp_name' => $tmp,
+		];
+
+		$image_id = media_handle_sideload( $file_array, 0 );
+		if ( is_wp_error( $image_id ) ) {
+			@unlink( $tmp );
+
+			return null;
+		}
+
+		return $image_id;
+	}
+
+	/**
+	 * Create a new variable product
+	 */
+	private function createProduct( array $normalized, array $raw ): void {
+		$product = new WC_Product_Variable();
+		$product->set_name( $normalized['Name'] );
+		$product->set_sku( $normalized['SKU'] );
+		$product->set_description( $normalized['Description'] ?? '' );
+		$product->save();
+
+		// 🔹 Store raw ERP data in post_meta
+		update_post_meta( $product->get_id(), '_citypaints_raw_data', wp_json_encode( $raw ) );
+
+		$this->setupAttributesAndVariations( $product, $normalized['Units'] );
+	}
+}
+
+
+/* ======================================================
+   FILE: ./src/Woo/AddToCart.php
+   ====================================================== */
+
+<?php
+
+namespace CityPaintsERP\Woo;
+
+use WC_AJAX;
+
+class AddToCart {
+
+	public function __construct() {
+		add_action( 'wp_ajax_woocommerce_ajax_add_to_cart', [ $this, 'woocommerce_ajax_add_to_cart' ] );
+		add_action( 'wp_ajax_nopriv_woocommerce_ajax_add_to_cart', [ $this, 'woocommerce_ajax_add_to_cart' ] );
+	}
+
+
+	public function woocommerce_ajax_add_to_cart() {
+		WC_AJAX::add_to_cart();
+	}
+
+}
+
+
+/* End of combined dump */

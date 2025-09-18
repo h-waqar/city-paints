@@ -35,35 +35,6 @@ class ProductSyncButton {
 		}
 	}
 
-//	public function handleSync(): void {
-//		try {
-//			check_ajax_referer( 'citypaints_sync', 'nonce' );
-//
-//			if ( ! current_user_can( 'manage_woocommerce' ) ) {
-//				wp_send_json_error( [ 'message' => 'Permission denied' ], 403 );
-//			}
-//
-////			$res = $this->fetch->listProducts();
-////			$res = $this->fetch->fetchMegaProducts();
-//
-//			if ( is_wp_error( $res ) ) {
-//				wp_send_json_error( [ 'message' => $res->get_error_message(), 'data' => $res->get_error_data() ], 500 );
-//			}
-//
-//			wp_send_json_success( [
-//				'message' => 'Products synced successfully (placeholder)',
-//				'data'    => $res
-//			] );
-//
-//		} catch ( Throwable $e ) {
-//			wp_send_json_error( [
-//				'message' => $e->getMessage(),
-//				'trace'   => $e->getTraceAsString(),
-//			], 500 );
-//		}
-//	}
-
-
 	public function handleSync(): void {
 		try {
 			check_ajax_referer( 'citypaints_sync', 'nonce' );

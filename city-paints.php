@@ -103,3 +103,14 @@ function wpRemoteApiCall() {
 }
 
 //add_action( 'init', 'wpRemoteApiCall', 20 );
+
+// Prevent WordPress from adding <p> or <br> around shortcodes
+remove_filter( 'the_content', 'wpautop' );
+remove_filter( 'the_content', 'wptexturize' );
+remove_filter( 'the_excerpt', 'wpautop' );
+
+// Also stop autop just on shortcode output
+remove_filter( 'the_content', 'do_shortcode', 11 );
+add_filter( 'the_content', function ( $content ) {
+	return do_shortcode( shortcode_unautop( $content ) );
+}, 11 );
